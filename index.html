@@ -2,13 +2,16 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
-  <title>Toko Online POS Profesional</title>
+  <title>Toko Online POS Profesional dengan PDF & Kategori</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <!-- Bootstrap -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
 
-  <!-- Custom CSS (SASS bisa compile ke sini) -->
+  <!-- jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <!-- Custom CSS -->
   <style>
     body { background: #f8f9fa; }
     .product-card img { height: 180px; object-fit: cover; }
@@ -29,6 +32,13 @@
 </nav>
 
 <div class="container my-4">
+  <div class="row mb-3">
+    <div class="col-md-4">
+      <select id="filterCategory" class="form-select" onchange="filterCategory()">
+        <option value="all">Semua Kategori</option>
+      </select>
+    </div>
+  </div>
   <div class="row" id="productList"></div>
 </div>
 
@@ -48,14 +58,15 @@
   <h3>Admin Panel - Kelola Produk</h3>
   <form id="productForm" class="mb-4">
     <div class="row g-2">
-      <div class="col-md-4"><input type="text" class="form-control" placeholder="Nama Produk" id="productName" required></div>
-      <div class="col-md-3"><input type="number" class="form-control" placeholder="Harga" id="productPrice" required></div>
+      <div class="col-md-3"><input type="text" class="form-control" placeholder="Nama Produk" id="productName" required></div>
+      <div class="col-md-2"><input type="number" class="form-control" placeholder="Harga" id="productPrice" required></div>
       <div class="col-md-3"><input type="text" class="form-control" placeholder="URL Gambar" id="productImage" required></div>
+      <div class="col-md-2"><input type="text" class="form-control" placeholder="Kategori" id="productCategory" required></div>
       <div class="col-md-2"><button type="submit" class="btn btn-success w-100">Tambah/Update</button></div>
     </div>
   </form>
   <table class="table table-bordered">
-    <thead><tr><th>Nama</th><th>Harga</th><th>Gambar</th><th>Aksi</th></tr></thead>
+    <thead><tr><th>Nama</th><th>Harga</th><th>Kategori</th><th>Gambar</th><th>Aksi</th></tr></thead>
     <tbody id="adminProductTable"></tbody>
   </table>
 </div>
@@ -64,6 +75,7 @@
 <div class="container panel" id="invoicePanel" style="display:none;">
   <h3>Invoice Transaksi</h3>
   <div id="invoiceList"></div>
+  <button class="btn btn-primary" onclick="downloadAllInvoices()">Download Semua Invoice PDF</button>
 </div>
 
 <!-- Modal Keranjang -->
@@ -98,13 +110,10 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// ================= DATA =================
-let products = JSON.parse(localStorage.getItem('products')) || [
-  {id:1, name:'Kursi Minimalis', price:750000, image:'https://picsum.photos/300?1'},
-  {id:2, name:'Meja Kayu', price:1250000, image:'https://picsum.photos/300?2'},
-  {id:3, name:'Sofa Modern', price:3500000, image:'https://picsum.photos/300?3'}
-];
+const { jsPDF } = window.jspdf;
 
+// ================= DATA =================
+let products = JSON.parse(localStorage.getItem('products')) || [];
 let cart = JSON.parse(localStorage.getItem('cart')) || [];
 let invoices = JSON.parse(localStorage.getItem('invoices')) || [];
 let users = JSON.parse(localStorage.getItem('users')) || [
@@ -113,49 +122,57 @@ let users = JSON.parse(localStorage.getItem('users')) || [
 ];
 let currentUser = null;
 
-function saveCart() { localStorage.setItem('cart', JSON.stringify(cart)); }
-function saveProducts() { localStorage.setItem('products', JSON.stringify(products)); }
-function saveInvoices() { localStorage.setItem('invoices', JSON.stringify(invoices)); }
-function saveUsers() { localStorage.setItem('users', JSON.stringify(users)); }
+function saveCart(){ localStorage.setItem('cart', JSON.stringify(cart)); }
+function saveProducts(){ localStorage.setItem('products', JSON.stringify(products)); updateCategoryFilter(); }
+function saveInvoices(){ localStorage.setItem('invoices', JSON.stringify(invoices)); }
+function saveUsers(){ localStorage.setItem('users', JSON.stringify(users)); }
 
 // ================= PANEL =================
 function togglePanel(panelId){
-  const panels = ['adminPanel','invoicePanel','loginPanel'];
+  const panels=['adminPanel','invoicePanel','loginPanel'];
   panels.forEach(p=>document.getElementById(p).style.display='none');
-  document.getElementById(panelId).style.display='block';
+  if(panelId) document.getElementById(panelId).style.display='block';
   if(panelId==='adminPanel') renderAdminProducts();
   if(panelId==='invoicePanel') renderInvoices();
 }
 
 // ================= RENDER =================
-function renderProducts(){
-  const list = document.getElementById('productList'); list.innerHTML='';
-  products.forEach(p=>{ list.innerHTML+=`
-    <div class='col-md-4 mb-4'><div class='card product-card'>
-      <img src='${p.image}' class='card-img-top'>
-      <div class='card-body'><h5>${p.name}</h5><p>Rp ${p.price.toLocaleString()}</p>
-      <button class='btn btn-primary' onclick='addToCart(${p.id})'>Tambah</button></div></div></div>`;
+function renderProducts(category='all'){
+  const list=document.getElementById('productList'); list.innerHTML='';
+  products.filter(p=>category==='all'||p.category===category).forEach(p=>{
+    list.innerHTML+=`<div class='col-md-4 mb-4'><div class='card product-card'><img src='${p.image}' class='card-img-top'><div class='card-body'><h5>${p.name}</h5><p>Rp ${p.price.toLocaleString()}</p><p>Kategori: ${p.category}</p><button class='btn btn-primary' onclick='addToCart(${p.id})'>Tambah</button></div></div></div>`;
   });
 }
 
 function renderAdminProducts(){
   const table=document.getElementById('adminProductTable'); table.innerHTML='';
   products.forEach((p,index)=>{
-    table.innerHTML+=`<tr><td>${p.name}</td><td>Rp ${p.price.toLocaleString()}</td><td><img src='${p.image}' style='height:50px;'></td><td><button class='btn btn-warning btn-sm' onclick='editProduct(${index})'>Edit</button> <button class='btn btn-danger btn-sm' onclick='deleteProduct(${index})'>Hapus</button></td></tr>`;
+    table.innerHTML+=`<tr><td>${p.name}</td><td>Rp ${p.price.toLocaleString()}</td><td>${p.category}</td><td><img src='${p.image}' style='height:50px;'></td><td><button class='btn btn-warning btn-sm' onclick='editProduct(${index})'>Edit</button> <button class='btn btn-danger btn-sm' onclick='deleteProduct(${index})'>Hapus</button></td></tr>`;
   });
+}
+
+function updateCategoryFilter(){
+  const select=document.getElementById('filterCategory');
+  const categories=[...new Set(products.map(p=>p.category))];
+  select.innerHTML='<option value="all">Semua Kategori</option>'+categories.map(c=>`<option value='${c}'>${c}</option>`).join('');
+}
+
+function filterCategory(){
+  const category=document.getElementById('filterCategory').value;
+  renderProducts(category);
 }
 
 function renderInvoices(){
   const container=document.getElementById('invoiceList'); container.innerHTML='';
-  invoices.forEach((inv, idx)=>{
-    container.innerHTML+=`<div class='invoice'><h5>Invoice #${idx+1}</h5><p>Tanggal: ${new Date(inv.date).toLocaleString()}</p><table class='table'><thead><tr><th>Produk</th><th>Qty</th><th>Harga</th><th>Total</th></tr></thead><tbody>${inv.items.map(i=>`<tr><td>${i.name}</td><td>${i.qty}</td><td>Rp ${i.price.toLocaleString()}</td><td>Rp ${(i.qty*i.price).toLocaleString()}</td></tr>`).join('')}</tbody></table><h5>Total: Rp ${inv.total.toLocaleString()}</h5></div>`;
+  invoices.forEach((inv,idx)=>{
+    container.innerHTML+=`<div class='invoice'><h5>Invoice #${idx+1}</h5><p>Tanggal: ${new Date(inv.date).toLocaleString()}</p><table class='table'><thead><tr><th>Produk</th><th>Qty</th><th>Harga</th><th>Total</th></tr></thead><tbody>${inv.items.map(i=>`<tr><td>${i.name}</td><td>${i.qty}</td><td>Rp ${i.price.toLocaleString()}</td><td>Rp ${(i.qty*i.price).toLocaleString()}</td></tr>`).join('')}</tbody></table><h5>Total: Rp ${inv.total.toLocaleString()}</h5><button class='btn btn-secondary' onclick='downloadInvoicePDF(${idx})'>Download PDF</button></div>`;
   });
 }
 
 // ================= CART =================
 function addToCart(id){
   if(!currentUser){ alert('Silakan login terlebih dahulu'); return; }
-  const item = cart.find(i=>i.id===id); if(item) item.qty++; else { const product=products.find(p=>p.id===id); cart.push({...product, qty:1}); }
+  const item=cart.find(i=>i.id===id); if(item) item.qty++; else { const product=products.find(p=>p.id===id); cart.push({...product, qty:1}); }
   saveCart(); updateCartCount();
 }
 function updateCartCount(){ document.getElementById('cartCount').innerText=cart.reduce((a,b)=>a+b.qty,0); }
@@ -171,19 +188,19 @@ function checkout(){
   if(cart.length===0){ alert('Keranjang kosong'); return; }
   const total=cart.reduce((a,b)=>a+b.qty*b.price,0);
   invoices.push({date:Date.now(), items:[...cart], total}); saveInvoices();
-  alert('Checkout berhasil! Total: Rp '+total.toLocaleString());
-  cart=[]; saveCart(); updateCartCount(); renderCart(); renderInvoices();
+  alert('Checkout berhasil! Total: Rp '+total.toLocaleString()); cart=[]; saveCart(); updateCartCount(); renderCart(); renderInvoices();
 }
 
 // ================= ADMIN =================
 document.getElementById('productForm').addEventListener('submit',function(e){
   e.preventDefault(); if(currentUser.role!=='admin'){ alert('Hanya admin yang bisa mengelola produk'); return; }
   const name=document.getElementById('productName').value; const price=parseInt(document.getElementById('productPrice').value);
-  const image=document.getElementById('productImage').value; const existingIndex=products.findIndex(p=>p.name===name);
-  if(existingIndex>=0){ products[existingIndex]={...products[existingIndex], price, image}; alert('Produk diupdate'); } else { products.push({id:Date.now(), name, price, image}); alert('Produk ditambahkan'); }
+  const image=document.getElementById('productImage').value; const category=document.getElementById('productCategory').value;
+  const existingIndex=products.findIndex(p=>p.name===name);
+  if(existingIndex>=0){ products[existingIndex]={...products[existingIndex], price, image, category}; alert('Produk diupdate'); } else { products.push({id:Date.now(), name, price, image, category}); alert('Produk ditambahkan'); }
   saveProducts(); renderProducts(); renderAdminProducts(); this.reset();
 });
-function editProduct(index){ const p=products[index]; document.getElementById('productName').value=p.name; document.getElementById('productPrice').value=p.price; document.getElementById('productImage').value=p.image; }
+function editProduct(index){ const p=products[index]; document.getElementById('productName').value=p.name; document.getElementById('productPrice').value=p.price; document.getElementById('productImage').value=p.image; document.getElementById('productCategory').value=p.category; }
 function deleteProduct(index){ if(confirm('Hapus produk ini?')){ products.splice(index,1); saveProducts(); renderProducts(); renderAdminProducts(); } }
 
 // ================= LOGIN =================
@@ -193,8 +210,22 @@ document.getElementById('loginForm').addEventListener('submit',function(e){
   if(user){ currentUser=user; alert('Login berhasil! Role: '+user.role); togglePanel(''); document.getElementById('loginMessage').innerText=''; } else { document.getElementById('loginMessage').innerText='Username/Password salah'; }
 });
 
+// ================= PDF =================
+function downloadInvoicePDF(idx){
+  const inv=invoices[idx];
+  const doc=new jsPDF(); doc.setFontSize(16); doc.text(`Invoice #${idx+1}`,10,10);
+  doc.setFontSize(12); doc.text(`Tanggal: ${new Date(inv.date).toLocaleString()}`,10,20);
+  let y=30; inv.items.forEach(item=>{
+    doc.text(`${item.name} | Qty: ${item.qty} | Harga: Rp ${item.price.toLocaleString()} | Total: Rp ${(item.price*item.qty).toLocaleString()}`,10,y);
+    y+=10;
+  });
+  doc.text(`Total: Rp ${inv.total.toLocaleString()}`,10,y+10);
+  doc.save(`Invoice_${idx+1}.pdf`);
+}
+function downloadAllInvoices(){ invoices.forEach((_,idx)=>downloadInvoicePDF(idx)); }
+
 // ================= INIT =================
-renderProducts(); updateCartCount(); renderInvoices();
+renderProducts(); updateCartCount(); renderInvoices(); updateCategoryFilter();
 </script>
 </body>
 </html>
